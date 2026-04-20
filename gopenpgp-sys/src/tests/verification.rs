@@ -139,6 +139,33 @@ qH+18lbt07G4TaKHio0k3ZeISm5Yej5h42Lh4SfVq65l0vVa/40XmNII
     assert!(signature_info.key_id() > 0, "there should be a key id");
 }
 
+/// Regression test for the wrong null-pointer check in `selected_signature()`.
+///
+/// `key_fingerprint` and `selected_signature` are independent nullable pointers.
+/// The method must guard on `selected_signature.is_null()`, not `key_fingerprint.is_null()`.
+/// When `key_fingerprint` is non-null but `selected_signature` is null the guard should
+/// still return `None`; with the bug it passes the guard and calls
+/// `slice::from_raw_parts(null, 0)` — undefined behaviour caught by Miri.
+#[test]
+fn selected_signature_returns_none_when_only_signature_ptr_is_null() {
+    use std::mem::ManuallyDrop;
+    use std::ptr::null_mut;
+
+    let dummy: u8 = 0xFF;
+    // ManuallyDrop prevents Drop from calling pgp_free on the stack pointer.
+    let info = ManuallyDrop::new(SignatureInfo(sys::PGP_SignatureInfo {
+        signature_type: 0,
+        creation_time: 0,
+        key_id: 0,
+        key_fingerprint: &dummy as *const u8 as *mut u8, // non-null
+        key_fingerprint_len: 1,
+        selected_signature: null_mut(), // null — the state that triggers the bug
+        selected_signature_len: 0,
+    }));
+
+    assert_eq!(info.selected_signature(), None);
+}
+
 #[test]
 fn test_verify_detached_stream() {
     let test_time: u64 = 1706018465;
